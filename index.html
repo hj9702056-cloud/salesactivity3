@@ -834,19 +834,18 @@ function parseMasterCustomer(rows, fname) {
   const codeKey  = keys.find(k => k.includes('거래처코드') || k === '거래처코드');
   const gradeKey = keys.find(k => k.includes('등급'));
   const nameKey  = keys.find(k => k.includes('거래처명'));
+  const psmKey   = keys.find(k => k.includes('영업사원명') || k === '영업사원명');
   if (!codeKey || !gradeKey) { setStatus('master-customer','err','❌ 거래처코드/등급 컬럼 없음'); return; }
   const map = {};
   rows.forEach(r => {
-    // 거래처코드 정규화: 숫자로 읽혀도 문자열로, 소수점 제거, 공백 제거
     let code = String(r[codeKey]||'').trim().replace(/\.0+$/, '');
     if (!code) return;
     const gradeRaw = String(r[gradeKey]||'').trim();
     const gradeMatch = gradeRaw.match(/[SABCDFsabcdf]/);
     const grade = gradeMatch ? gradeMatch[0].toUpperCase() : gradeRaw;
     const name  = String(r[nameKey]||'').trim();
-    map[code] = { grade, name };
-    // 혹시 앞에 0이 붙거나 없는 버전도 함께 저장 (10자리 기준)
-    // 예: '2200001223' ↔ '2200001223' (동일하면 한 번만 저장)
+    const psm   = psmKey ? String(r[psmKey]||'').trim() : '';
+    map[code] = { grade, name, psm };
   });
   CUSTOMER_MAP = map;
   saveMasters();
@@ -1326,6 +1325,7 @@ function buildGDATA(allRecords) {
       gradeData[g].totalSales  += st.visits.reduce((a,v)=>a+v.sales,0);
       gradeStores[g].push({
         name:         st.name,
+        code:         st.custCode || '',
         totalVisits:  st.visits.length,
         weeklyVisits, status, achieve,
         required:     def.std > 0 ? +(def.std * WEEKS).toFixed(1) : 0,
@@ -1817,11 +1817,15 @@ function dRender(){
       const safeCode = (s.code||'').replace(/"/g,'&quot;');
       const safedsm  = dsm.replace(/"/g,'&quot;');
       const codeTag  = s.code ? `<span style="font-size:10px;color:#9ca3af;margin-left:4px">[${s.code}]</span>` : '';
+      const psm      = getPsmForStore(s.name, s.code);
+      const psmTag   = psm ? `<div style="font-size:10px;color:#9ca3af;margin-top:1px">PSM: ${psm}</div>` : '';
       return `<tr><td><span class="seq">${i+1}</span></td><td>${s.time}</td>
         <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;color:#2563eb;text-decoration:underline;text-underline-offset:2px;"
           title="${s.name}${s.code?' ['+s.code+']':''} 클릭 → 달력에서 보기"
           data-store="${safeName}" data-code="${safeCode}" data-dsm="${safedsm}"
-          onclick="goToCalendar(this.dataset.store, this.dataset.dsm, this.dataset.code)">${s.name}${codeTag}</td>
+          onclick="goToCalendar(this.dataset.store, this.dataset.dsm, this.dataset.code)">
+          <div>${s.name}${codeTag}</div>${psmTag}
+        </td>
         <td><div class="sbar-wrap"><div class="sbar" style="width:${bw}px"></div><span>${fmt(s.sales)}원</span></div></td></tr>`;
     }).join('');
     const totRow=`<tr class="total-row"><td colspan="2" style="text-align:right;color:#6b7280;font-weight:400">합계</td><td>${day.visits}개 점포</td><td style="color:#1d4ed8">${fmt(day.totalSales)}원</td></tr>`;
@@ -1948,6 +1952,13 @@ dPopulateDsm();
 <!-- ══════════════════ PAGE 5: 방문 달력 ══════════════════ -->
 <div id="page-calendar" class="page">
   <div class="cal-wrap">
+
+    <!-- 뒤로가기 버튼 (이전 탭에서 넘어왔을 때만 표시) -->
+    <div id="cal-back-bar" style="display:none;margin-bottom:10px">
+      <button onclick="calGoBack()" style="display:flex;align-items:center;gap:6px;padding:6px 14px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;cursor:pointer;font-size:13px;color:#374151">
+        ← <span id="cal-back-label">이전 탭으로 돌아가기</span>
+      </button>
+    </div>
 
     <!-- 필터 바 -->
     <div class="cal-filters">
@@ -2158,11 +2169,14 @@ function showVisitDetail(dsmKey, grade) {
       const achieveTxt = s.achieve !== null ? `달성률 ${s.achieve}%` : '';
       const reqTxt = s.required ? `기준 ${s.required}회` : '';
       const safeName = (s.name||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      const safeCode = (s.code||'').replace(/'/g,"\\'");
+      const psm = getPsmForStore(s.name, s.code);
+      const psmTag = psm ? `<span style="font-size:10px;color:#9ca3af"> · PSM: ${psm}</span>` : '';
       h += `<div class="modal-store-row">
         <div style="flex:1;min-width:0">
-          <div class="modal-store-name" onclick="document.getElementById('visit-modal').classList.remove('open');goToCalendar('${safeName}','','')"
+          <div class="modal-store-name" onclick="document.getElementById('visit-modal').classList.remove('open');goToCalendar('${safeName}','','${safeCode}')"
             style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;color:#2563eb;text-decoration:underline;text-underline-offset:2px">
-            ${s.name} <span style="font-size:10px">📅</span>
+            ${s.name}${s.code?` <span style="font-size:10px;color:#9ca3af">[${s.code}]</span>`:''} <span style="font-size:10px">📅</span>${psmTag}
           </div>
           <div style="font-size:10px;color:#9ca3af;margin-top:2px">${reqTxt} · ${achieveTxt}</div>
           <div style="margin-top:4px;height:4px;background:#e5e7eb;border-radius:2px">
@@ -2489,6 +2503,12 @@ function fmtSales(n) {
   return (n/10000).toFixed(1)+'만';
 }
 
+function getPsmForStore(name, code) {
+  let entry = code ? CUSTOMER_MAP[code] : null;
+  if (!entry) entry = Object.values(CUSTOMER_MAP).find(v => v.name === name);
+  return (entry && entry.psm) ? entry.psm : '';
+}
+
 function getGradeForStore(name, code) {
   // code로 직접 조회 (빠르고 정확)
   let entry = code ? CUSTOMER_MAP[code] : null;
@@ -2602,9 +2622,11 @@ function renderCalendar() {
         const gc    = getGradeClass(s.name, s.code);
         const label = s.name.length > 10 ? s.name.substring(0, 9) + '…' : s.name;
         const code  = s.code ? '<span style="font-size:9px;color:#9ca3af;margin-left:2px">[' + s.code + ']</span>' : '';
+        const psm   = getPsmForStore(s.name, s.code);
+        const psmTag = psm ? '<span style="font-size:9px;color:#9ca3af;margin-left:3px">·' + psm + '</span>' : '';
         const amt   = s.sales > 0 ? fmtSales(s.sales) : '';
         inner += '<div class="cal-chip ' + gc + '">'
-          + '<span class="cal-chip-name">' + label + code + '</span>'
+          + '<span class="cal-chip-name">' + label + code + psmTag + '</span>'
           + '<span class="cal-chip-time">' + s.time + '</span>'
           + (amt ? '<span class="cal-chip-amt">' + amt + '</span>' : '')
           + '</div>';
@@ -2674,14 +2696,17 @@ function openCalPopup(dateStr) {
   let body = '';
   allStores.forEach((s,i) => {
     const gc = getGradeClass(s.name, s.code);
+    const psm = getPsmForStore(s.name, s.code);
+    const psmTag = psm ? `&nbsp;·&nbsp; PSM: ${psm}` : '';
     body += `<div class="cal-popup-store">
       <div class="cal-popup-store-num">${i+1}</div>
       <div style="flex:1;min-width:0">
-        <div class="cal-popup-store-name">${s.name}</div>
+        <div class="cal-popup-store-name">${s.name}${s.code ? ` <span style="font-size:10px;color:#9ca3af">[${s.code}]</span>` : ''}</div>
         <div class="cal-popup-store-meta">
           🕐 ${s.time}
           ${selDsm?'':'&nbsp;·&nbsp; 👤 '+s.dsm}
           &nbsp;·&nbsp;<span class="cal-chip ${gc}" style="display:inline-block;padding:1px 5px;font-size:9px;">${getGradeLabel(s.name, s.code)}</span>
+          ${psmTag}
         </div>
       </div>
       <div class="cal-popup-store-amt">${fmtSales(s.sales)}</div>
@@ -2698,7 +2723,34 @@ function closeCalPopup(e) {
 }
 
 // 일별상세에서 거래처 클릭 → 달력 탭 이동 + 자동 필터
+let calPrevPage = null; // 달력으로 넘어오기 전 페이지
+
+function calGoBack() {
+  if (!calPrevPage) return;
+  const btn = document.getElementById('tab-' + calPrevPage.id);
+  if (btn) showPage(calPrevPage.id, btn);
+  // 달력 검색 초기화
+  const searchEl = document.getElementById('cal-store-search');
+  if (searchEl) searchEl.value = '';
+  renderCalendar();
+  // 뒤로가기 버튼 숨기기
+  document.getElementById('cal-back-bar').style.display = 'none';
+  calPrevPage = null;
+}
+
 function goToCalendar(storeName, dsmName, storeCode) {
+  // 현재 활성 탭 기억
+  const activeTab = document.querySelector('.tab-btn.active');
+  if (activeTab) {
+    const tabId = activeTab.id.replace('tab-', '');
+    const tabLabel = activeTab.textContent.trim();
+    calPrevPage = {id: tabId, label: tabLabel};
+    const backBar = document.getElementById('cal-back-bar');
+    const backLabel = document.getElementById('cal-back-label');
+    if (backBar) backBar.style.display = 'block';
+    if (backLabel) backLabel.textContent = tabLabel + '으로 돌아가기';
+  }
+
   // 1. 달력 탭으로 이동
   const calBtn = document.getElementById('tab-calendar');
   if (calBtn) showPage('calendar', calBtn);
